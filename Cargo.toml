@@ -1,0 +1,16 @@
+[package]
+name = "phdb_create_images_zip"
+version = "0.1.0"
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+lambda_runtime = "0.4.1"
+rusoto_core = "0.47.0"
+rusoto_s3 = "0.47.0"
+tokio = { version = "1.10.1", features = ["macros", "rt-multi-thread","sync"] }
+image-combiner = {git="https://github.com/sinyo-matu/image-combiner",version="0.1.7"}
+serde = "1.0.130"
+serde_json = "1.0.67"
+zip = "0.5.13"
