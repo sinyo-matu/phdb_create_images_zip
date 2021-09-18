@@ -119,7 +119,7 @@ async fn func(event: Value, _: Context) -> Result<Value, Error> {
     // if request not have body then this item not have a size data
     if let None = item_size {
         let mut zip_file =
-            match std::fs::File::create(format!("/mnt/phdb_point1/{}_images.zip", item_code)) {
+            match std::fs::File::create(format!("/mnt/phdb/{}_images.zip", item_code)) {
                 Ok(file) => file,
                 Err(err) => {
                     println!("error happened:{}", err);
@@ -136,7 +136,7 @@ async fn func(event: Value, _: Context) -> Result<Value, Error> {
                 if let Err(err) =
                     zip.start_file(format!("{}_{}.jpg", item_code, i + 1), zip_options)
                 {
-                    std::fs::remove_file("/mnt/phdb_point1/{}_images.zip").unwrap();
+                    std::fs::remove_file("/mnt/phdb/{}_images.zip").unwrap();
                     return Ok(json!(Response {
                         result: "error".to_string(),
                         message: format!("error when zip start file error:{}", err)
@@ -144,7 +144,7 @@ async fn func(event: Value, _: Context) -> Result<Value, Error> {
                 };
 
                 if let Err(err) = zip.write_all(&image_byte) {
-                    std::fs::remove_file("/mnt/phdb_point1/{}_images.zip").unwrap();
+                    std::fs::remove_file("/mnt/phdb/{}_images.zip").unwrap();
                     return Ok(json!(Response {
                         result: "error".to_string(),
                         message: format!("error when zip write file error:{}", err)
@@ -152,7 +152,7 @@ async fn func(event: Value, _: Context) -> Result<Value, Error> {
                 };
             }
             if let Err(err) = zip.finish() {
-                std::fs::remove_file("/mnt/phdb_point1/{}_images.zip").unwrap();
+                std::fs::remove_file("/mnt/phdb/{}_images.zip").unwrap();
                 return Ok(json!(Response {
                     result: "error".to_string(),
                     message: format!("error when zip finish error:{}", err)
@@ -168,13 +168,13 @@ async fn func(event: Value, _: Context) -> Result<Value, Error> {
             ..Default::default()
         };
         if let Err(_) = s3_client.put_object(put_request).await {
-            std::fs::remove_file("/mnt/phdb_point1/{}_images.zip").unwrap();
+            std::fs::remove_file("/mnt/phdb/{}_images.zip").unwrap();
             return Ok(json!(Response {
                 result: "error".to_string(),
                 message: "error when put image".to_string()
             }));
         }
-        std::fs::remove_file("/mnt/phdb_point1/{}_images.zip").unwrap();
+        std::fs::remove_file("/mnt/phdb/{}_images.zip").unwrap();
         return Ok(json!(Response {
             result: "ok".to_string(),
             message: "".to_string()
@@ -236,23 +236,22 @@ async fn func(event: Value, _: Context) -> Result<Value, Error> {
             }
         }
     };
-    let mut zip_file =
-        match std::fs::File::create(format!("/mnt/phdb_point1/{}_images.zip", item_code)) {
-            Ok(file) => file,
-            Err(err) => {
-                println!("error happened:{}", err);
-                return Ok(json!(Response {
-                    result: "error".to_string(),
-                    message: "error when create zip file".to_string()
-                }));
-            }
-        };
+    let mut zip_file = match std::fs::File::create(format!("/mnt/phdb/{}_images.zip", item_code)) {
+        Ok(file) => file,
+        Err(err) => {
+            println!("error happened:{}", err);
+            return Ok(json!(Response {
+                result: "error".to_string(),
+                message: "error when create zip file".to_string()
+            }));
+        }
+    };
     {
         let mut zip = zip::ZipWriter::new(&zip_file);
         let zip_options = zip::write::FileOptions::default();
         for (i, image_byte) in image_bytes.into_iter().enumerate() {
             if let Err(err) = zip.start_file(format!("{}_{}.jpg", item_code, i + 1), zip_options) {
-                std::fs::remove_file("/mnt/phdb_point1/{}_images.zip").unwrap();
+                std::fs::remove_file("/mnt/phdb/{}_images.zip").unwrap();
                 return Ok(json!(Response {
                     result: "error".to_string(),
                     message: format!("error when zip start file error:{}", err)
@@ -260,7 +259,7 @@ async fn func(event: Value, _: Context) -> Result<Value, Error> {
             };
 
             if let Err(err) = zip.write_all(&image_byte) {
-                std::fs::remove_file("/mnt/phdb_point1/{}_images.zip").unwrap();
+                std::fs::remove_file("/mnt/phdb/{}_images.zip").unwrap();
                 return Ok(json!(Response {
                     result: "error".to_string(),
                     message: format!("error when zip write file error:{}", err)
@@ -268,14 +267,14 @@ async fn func(event: Value, _: Context) -> Result<Value, Error> {
             };
         }
         if let Err(err) = zip.start_file(format!("{}_size.jpg", item_code), zip_options) {
-            std::fs::remove_file("/mnt/phdb_point1/{}_images.zip").unwrap();
+            std::fs::remove_file("/mnt/phdb/{}_images.zip").unwrap();
             return Ok(json!(Response {
                 result: "error".to_string(),
                 message: format!("error when zip start file error:{}", err)
             }));
         }
         if let Err(err) = zip.write_all(&size_image_bytes) {
-            std::fs::remove_file("/mnt/phdb_point1/{}_images.zip").unwrap();
+            std::fs::remove_file("/mnt/phdb/{}_images.zip").unwrap();
             return Ok(json!(Response {
                 result: "error".to_string(),
                 message: format!("error when zip write file error:{}", err)
@@ -283,7 +282,7 @@ async fn func(event: Value, _: Context) -> Result<Value, Error> {
         };
 
         if let Err(err) = zip.finish() {
-            std::fs::remove_file("/mnt/phdb_point1/{}_images.zip").unwrap();
+            std::fs::remove_file("/mnt/phdb/{}_images.zip").unwrap();
             return Ok(json!(Response {
                 result: "error".to_string(),
                 message: format!("error when zip finish error:{}", err)
@@ -300,14 +299,14 @@ async fn func(event: Value, _: Context) -> Result<Value, Error> {
         ..Default::default()
     };
     if let Err(err) = s3_client.put_object(put_request).await {
-        std::fs::remove_file("/mnt/phdb_point1/{}_images.zip").unwrap();
+        std::fs::remove_file("/mnt/phdb/{}_images.zip").unwrap();
         println!("error happened:{:?}", err);
         return Ok(json!(Response {
             result: "error".to_string(),
             message: format!("put file error: {:?}", err)
         }));
     }
-    std::fs::remove_file("/mnt/phdb_point1/{}_images.zip").unwrap();
+    std::fs::remove_file("/mnt/phdb/{}_images.zip").unwrap();
     Ok(json!(Response {
         result: "ok".to_string(),
         message: "".to_string()
