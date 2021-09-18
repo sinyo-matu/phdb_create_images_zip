@@ -177,10 +177,11 @@ async fn func(event: Value, _: Context) -> Result<Value, Error> {
         println!(
             "file:length:{},is file:{},file type:{:?}",
             file_meta.len(),
-            file_meta.is_dir(),
+            file_meta.is_file(),
             file_meta.file_type()
         );
         zip_file.read_to_end(&mut zip_file_buf).unwrap();
+        println!("buf for upload length: {}", zip_file_buf.len());
         let put_request = rusoto_s3::PutObjectRequest {
             bucket: "phbundledimages".to_string(),
             body: Some(zip_file_buf.into()),
