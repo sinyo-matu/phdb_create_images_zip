@@ -37,7 +37,7 @@ async fn main() -> Result<(), Error> {
 
 async fn func(event: Value, _: Context) -> Result<Value, Error> {
     let item_code = match event.get("item_code") {
-        Some(string) => string.to_string(),
+        Some(string) => string.as_str().unwrap().to_owned(),
         None => {
             return Ok(json!(Response {
                 result: "error".to_string(),
