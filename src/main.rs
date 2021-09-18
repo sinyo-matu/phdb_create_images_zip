@@ -180,8 +180,23 @@ async fn func(event: Value, _: Context) -> Result<Value, Error> {
             file_meta.is_file(),
             file_meta.file_type()
         );
-        zip_file.read_to_end(&mut zip_file_buf).unwrap();
-        println!("buf for upload length: {}", zip_file_buf.len());
+        match zip_file.read_to_end(&mut zip_file_buf) {
+            Ok(read_len) => {
+                println!("buf for upload length: {}", read_len);
+                if read_len == 0 {
+                    return Ok(json!(Response {
+                        result: "error".to_string(),
+                        message: "zip file read len is 0".to_string(),
+                    }));
+                }
+            }
+            Err(err) => {
+                return Ok(json!(Response {
+                    result: "error".to_string(),
+                    message: format!("error when read zip file:{}", err)
+                }));
+            }
+        }
         let put_request = rusoto_s3::PutObjectRequest {
             bucket: "phbundledimages".to_string(),
             body: Some(zip_file_buf.into()),
