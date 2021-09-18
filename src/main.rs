@@ -121,7 +121,8 @@ async fn func(event: Value, _: Context) -> Result<Value, Error> {
         let mut zip_file =
             match std::fs::File::create(format!("/mnt/phdb_point1/{}_images.zip", item_code)) {
                 Ok(file) => file,
-                Err(_err) => {
+                Err(err) => {
+                    println!("error happened:{}", err);
                     return Ok(json!(Response {
                         result: "error".to_string(),
                         message: "error when create zip file".to_string()
@@ -238,7 +239,8 @@ async fn func(event: Value, _: Context) -> Result<Value, Error> {
     let mut zip_file =
         match std::fs::File::create(format!("/mnt/phdb_point1/{}_images.zip", item_code)) {
             Ok(file) => file,
-            Err(_err) => {
+            Err(err) => {
+                println!("error happened:{}", err);
                 return Ok(json!(Response {
                     result: "error".to_string(),
                     message: "error when create zip file".to_string()
