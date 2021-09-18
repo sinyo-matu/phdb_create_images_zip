@@ -45,6 +45,7 @@ async fn func(event: Value, _: Context) -> Result<Value, Error> {
             }))
         }
     };
+    println!("item code is {}", &item_code);
     let image_count = match event.get("image_count") {
         Some(image_count) => match image_count.to_string().parse::<u32>() {
             Ok(image_count_u32) => image_count_u32,
@@ -89,6 +90,7 @@ async fn func(event: Value, _: Context) -> Result<Value, Error> {
             Err(err) => {
                 if let RusotoError::Service(ref err) = err {
                     if let GetObjectError::NoSuchKey(_) = err {
+                        println!("no such key:{}", format!("{}_{}.jpeg", item_code, no));
                         continue;
                     }
                 }
@@ -112,6 +114,11 @@ async fn func(event: Value, _: Context) -> Result<Value, Error> {
                 message: "error when read image bytes".to_string()
             }));
         }
+        println!(
+            "get image:{},len:{}",
+            format!("{}_{}.jpeg", item_code, no),
+            image_byte.len()
+        );
         image_bytes.push(image_byte);
     }
     let zip_file_path = format!("/mnt/phdb/{}_images.zip", item_code);
@@ -166,6 +173,13 @@ async fn func(event: Value, _: Context) -> Result<Value, Error> {
             }
         }
         let mut zip_file_buf = Vec::new();
+        let file_meta = zip_file.metadata().unwrap();
+        println!(
+            "file:length:{},is file:{},file type:{:?}",
+            file_meta.len(),
+            file_meta.is_dir(),
+            file_meta.file_type()
+        );
         zip_file.read_to_end(&mut zip_file_buf).unwrap();
         let put_request = rusoto_s3::PutObjectRequest {
             bucket: "phbundledimages".to_string(),
