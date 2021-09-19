@@ -15,3 +15,4 @@ image-combiner = {git="https://github.com/sinyo-matu/image-combiner",version="0.
 serde = "1.0.130"
 serde_json = "1.0.67"
 zip = "0.5.13"
+phdb_create_images_zip = { path = "." }
