@@ -20,15 +20,9 @@ jobs:
     steps:
       - uses: actions/checkout@v2
       - name: Build and Zip
-        uses: actions-rs/toolchain@v1
+        uses: zhxiaogg/cargo-static-build@master
         with:
-          toolchain: stable
-          target: x86_64-unknown-linux-musl
-          override: true
-      - uses: actions-rs/cargo@v1
-        with:
-          command: build
-          args: --target x86_64-unknown-linux-musl
+          cmd: cargo build --release
       - run: |
           sudo mv ./target/x86_64-unknown-linux-musl/release/${{ env.BINARY_NAME }} ./bootstrap
           sudo chmod 755 ./bootstrap  
