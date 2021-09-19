@@ -63,10 +63,9 @@ async fn func(event: Value, _: Context) -> Result<Value, Error> {
             }));
         }
     };
-    let item_size = match event.get("body") {
+    let item_size = match event.get("body").unwrap().as_str() {
         None => None,
-
-        Some(val) => match serde_json::from_str::<ItemSize>(val.to_string().as_str()) {
+        Some(val) => match serde_json::from_str::<ItemSize>(val) {
             Ok(item_size) => Some(item_size),
 
             Err(err) => {
