@@ -126,13 +126,7 @@ async fn func(event: Value, _: Context) -> Result<Value, Error> {
     /////////////////////////////////////////////
     // if request not have body then this item not have a size data
     if let None = item_size {
-        let zip_file = match std::fs::OpenOptions::new()
-            .create(true)
-            .read(true)
-            .write(true)
-            .append(true)
-            .open(&zip_file_path)
-        {
+        let zip_file = match std::fs::File::create(&zip_file_path) {
             Ok(file) => file,
             Err(err) => {
                 println!("error happened:{}", err);
@@ -177,9 +171,18 @@ async fn func(event: Value, _: Context) -> Result<Value, Error> {
             file_meta.is_file(),
             file_meta.file_type()
         );
-        let mut zip_file_buf = Vec::with_capacity(file_meta.len() as usize);
-        let mut buf_reader = std::io::BufReader::new(&zip_file);
-        match buf_reader.read_exact(&mut zip_file_buf) {
+        let zip_file = match std::fs::File::open(&zip_file_path) {
+            Ok(file) => file,
+            Err(err) => {
+                return Ok(json!(Response {
+                    result: "error".to_string(),
+                    message: format!("error when open file error:{}", err)
+                }));
+            }
+        };
+        let mut zip_file_buf = Vec::new();
+        let mut buf_reader = std::io::BufReader::new(zip_file);
+        match buf_reader.read_to_end(&mut zip_file_buf) {
             Ok(_) => (),
             Err(err) => {
                 return Ok(json!(Response {
@@ -196,13 +199,13 @@ async fn func(event: Value, _: Context) -> Result<Value, Error> {
             ..Default::default()
         };
         if let Err(_) = s3_client.put_object(put_request).await {
-            std::fs::remove_file(zip_file_path).unwrap();
+            std::fs::remove_file(&zip_file_path).unwrap();
             return Ok(json!(Response {
                 result: "error".to_string(),
                 message: "error when put image".to_string()
             }));
         }
-        std::fs::remove_file(zip_file_path).unwrap();
+        std::fs::remove_file(&zip_file_path).unwrap();
         return Ok(json!(Response {
             result: "ok".to_string(),
             message: "".to_string()
@@ -264,13 +267,7 @@ async fn func(event: Value, _: Context) -> Result<Value, Error> {
             }
         }
     };
-    let mut zip_file = match std::fs::OpenOptions::new()
-        .create(true)
-        .read(true)
-        .write(true)
-        .append(true)
-        .open(&zip_file_path)
-    {
+    let zip_file = match std::fs::File::create(&zip_file_path) {
         Ok(file) => file,
         Err(err) => {
             println!("error happened:{}", err);
@@ -285,7 +282,7 @@ async fn func(event: Value, _: Context) -> Result<Value, Error> {
         let zip_options = zip::write::FileOptions::default();
         for (i, image_byte) in image_bytes.into_iter().enumerate() {
             if let Err(err) = zip.start_file(format!("{}_{}.jpg", item_code, i + 1), zip_options) {
-                std::fs::remove_file(zip_file_path).unwrap();
+                std::fs::remove_file(&zip_file_path).unwrap();
                 return Ok(json!(Response {
                     result: "error".to_string(),
                     message: format!("error when zip start file error:{}", err)
@@ -293,7 +290,7 @@ async fn func(event: Value, _: Context) -> Result<Value, Error> {
             };
 
             if let Err(err) = zip.write_all(&image_byte) {
-                std::fs::remove_file(zip_file_path).unwrap();
+                std::fs::remove_file(&zip_file_path).unwrap();
                 return Ok(json!(Response {
                     result: "error".to_string(),
                     message: format!("error when zip write file error:{}", err)
@@ -301,14 +298,14 @@ async fn func(event: Value, _: Context) -> Result<Value, Error> {
             };
         }
         if let Err(err) = zip.start_file(format!("{}_size.jpg", item_code), zip_options) {
-            std::fs::remove_file(zip_file_path).unwrap();
+            std::fs::remove_file(&zip_file_path).unwrap();
             return Ok(json!(Response {
                 result: "error".to_string(),
                 message: format!("error when zip start file error:{}", err)
             }));
         }
         if let Err(err) = zip.write_all(&size_image_bytes) {
-            std::fs::remove_file(zip_file_path).unwrap();
+            std::fs::remove_file(&zip_file_path).unwrap();
             return Ok(json!(Response {
                 result: "error".to_string(),
                 message: format!("error when zip write file error:{}", err)
@@ -323,8 +320,26 @@ async fn func(event: Value, _: Context) -> Result<Value, Error> {
             }));
         }
     }
+
+    let zip_file = match std::fs::File::open(&zip_file_path) {
+        Ok(file) => file,
+        Err(err) => {
+            println!("error happened:{}", err);
+            return Ok(json!(Response {
+                result: "error".to_string(),
+                message: "error when create zip file".to_string()
+            }));
+        }
+    };
     let mut zip_file_buf = Vec::new();
-    zip_file.read_to_end(&mut zip_file_buf).unwrap();
+    let mut reader = std::io::BufReader::new(zip_file);
+    if let Err(err) = reader.read_to_end(&mut zip_file_buf) {
+        std::fs::remove_file(zip_file_path).unwrap();
+        return Ok(json!(Response {
+            result: "error".to_string(),
+            message: format!("error when reading zip file :{}", err)
+        }));
+    }
 
     let put_request = rusoto_s3::PutObjectRequest {
         bucket: "phbundledimages".to_string(),
