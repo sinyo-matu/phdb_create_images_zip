@@ -609,8 +609,8 @@ dependencies = [
 
 [[package]]
 name = "image-combiner"
-version = "0.1.8"
-source = "git+https://github.com/sinyo-matu/image-combiner#6989ccced6af32092f19978ef357229d87650ee5"
+version = "0.1.9"
+source = "git+https://github.com/sinyo-matu/image-combiner#eb8c666a40366ac2fc6f0b49aa9b171cd0432a82"
 dependencies = [
  "image",
  "imageproc",

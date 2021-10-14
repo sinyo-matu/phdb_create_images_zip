@@ -226,7 +226,7 @@ async fn func(event: Value, _: Context) -> Result<Value, Error> {
             let size_zh_escaped = item_size.size_zh.replace(SEPARATOR_PATTERN, " ");
             let table_head: Vec<String> = size_zh_escaped
                 .trim()
-                .split(" ")
+                .split(' ')
                 .map(|s| s.to_string())
                 .collect();
             let table_base = match TableBase::new(table_head, size_table.body, 2) {
