@@ -86,11 +86,9 @@ async fn func(event: Value, _: Context) -> Result<Value, Error> {
         let res = match s3_client.get_object(request).await {
             Ok(object) => object,
             Err(err) => {
-                if let RusotoError::Service(ref err) = err {
-                    if let GetObjectError::NoSuchKey(_) = err {
-                        println!("no such key:{}", format!("{}_{}.jpeg", item_code, no));
-                        continue;
-                    }
+                if let RusotoError::Service(GetObjectError::NoSuchKey(_)) = err {
+                    println!("no such key:{}", format!("{}_{}.jpeg", item_code, no));
+                    continue;
                 }
                 println!("error happened:{}", err);
                 return Ok(json!(Response {
@@ -120,10 +118,10 @@ async fn func(event: Value, _: Context) -> Result<Value, Error> {
         image_bytes.push(image_byte);
     }
     let zip_file_path = format!("/mnt/phdb/{}_images.zip", item_code);
-    let processor = Processor::new();
+    let processor = Processor::default();
     /////////////////////////////////////////////
     // if request not have body then this item not have a size data
-    if let None = item_size {
+    if item_size.is_none() {
         let zip_file = match std::fs::File::create(&zip_file_path) {
             Ok(file) => file,
             Err(err) => {
@@ -196,7 +194,7 @@ async fn func(event: Value, _: Context) -> Result<Value, Error> {
             key: format!("{}.zip", item_code),
             ..Default::default()
         };
-        if let Err(_) = s3_client.put_object(put_request).await {
+        if s3_client.put_object(put_request).await.is_err() {
             std::fs::remove_file(&zip_file_path).unwrap();
             return Ok(json!(Response {
                 result: "error".to_string(),
