@@ -1,5 +1,5 @@
 use image_combiner::{Processor, TableBase};
-use lambda_runtime::{handler_fn, Context, Error};
+use lambda_runtime::{service_fn, Error, LambdaEvent};
 use rusoto_core::{Region, RusotoError};
 use rusoto_s3::{GetObjectError, GetObjectRequest, S3Client, S3};
 use serde::{Deserialize, Serialize};
@@ -32,13 +32,13 @@ const SEPARATOR_PATTERN: &[char] = &['，', '、', ','];
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
-    let func = handler_fn(func);
+    let func = service_fn(func);
     lambda_runtime::run(func).await?;
     Ok(())
 }
 
-async fn func(event: Value, _: Context) -> Result<Value, Error> {
-    let item_code = match event.get("item_code") {
+async fn func(event: LambdaEvent<Value>) -> Result<Value, Error> {
+    let item_code = match event.payload.get("item_code") {
         Some(string) => string.as_str().unwrap().to_owned(),
         None => {
             return Ok(json!(Response {
@@ -48,7 +48,7 @@ async fn func(event: Value, _: Context) -> Result<Value, Error> {
         }
     };
     println!("item code is {}", &item_code);
-    let image_count = match event.get("image_count") {
+    let image_count = match event.payload.get("image_count") {
         Some(image_count) => match image_count.to_string().parse::<u32>() {
             Ok(image_count_u32) => image_count_u32,
             Err(_) => {
@@ -65,17 +65,20 @@ async fn func(event: Value, _: Context) -> Result<Value, Error> {
             }));
         }
     };
-    let item_size_opt = match event.get("body").unwrap().is_null() {
+    let item_size_opt = match event.payload.get("body").unwrap().is_null() {
         true => None,
-        false => match serde_json::from_value::<ItemSize>(event.get("body").unwrap().to_owned()) {
-            Ok(item_size) => Some(item_size),
-            Err(err) => {
-                return Ok(json!(Response {
-                    result: "error".to_string(),
-                    message: format!("error when parse body field error: {:?}", err)
-                }));
+        false => {
+            match serde_json::from_value::<ItemSize>(event.payload.get("body").unwrap().to_owned())
+            {
+                Ok(item_size) => Some(item_size),
+                Err(err) => {
+                    return Ok(json!(Response {
+                        result: "error".to_string(),
+                        message: format!("error when parse body field error: {:?}", err)
+                    }));
+                }
             }
-        },
+        }
     };
     let s3_client = S3Client::new(Region::ApNortheast1);
     let mut image_bytes: Vec<Vec<u8>> = Vec::new();
