@@ -10,12 +10,14 @@ use tokio::io::AsyncReadExt;
 #[derive(Clone, Debug, Deserialize)]
 struct ItemSize {
     size_table: Option<SizeTable>,
+    #[allow(dead_code)]
     size_description: Option<String>,
     size_zh: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 struct SizeTable {
+    #[allow(dead_code)]
     pub head: Vec<String>,
     pub body: Vec<Vec<String>>,
 }
@@ -63,7 +65,7 @@ async fn func(event: Value, _: Context) -> Result<Value, Error> {
             }));
         }
     };
-    let item_size = match event.get("body").unwrap().is_null() {
+    let item_size_opt = match event.get("body").unwrap().is_null() {
         true => None,
         false => match serde_json::from_value::<ItemSize>(event.get("body").unwrap().to_owned()) {
             Ok(item_size) => Some(item_size),
@@ -87,7 +89,7 @@ async fn func(event: Value, _: Context) -> Result<Value, Error> {
             Ok(object) => object,
             Err(err) => {
                 if let RusotoError::Service(GetObjectError::NoSuchKey(_)) = err {
-                    println!("no such key:{}", format!("{}_{}.jpeg", item_code, no));
+                    println!("no such key:{}", format_args!("{}_{}.jpeg", item_code, no));
                     continue;
                 }
                 println!("error happened:{}", err);
@@ -112,16 +114,16 @@ async fn func(event: Value, _: Context) -> Result<Value, Error> {
         }
         println!(
             "get image:{},len:{}",
-            format!("{}_{}.jpeg", item_code, no),
+            format_args!("{}_{}.jpeg", item_code, no),
             image_byte.len()
         );
         image_bytes.push(image_byte);
     }
     let zip_file_path = format!("/mnt/phdb/{}_images.zip", item_code);
-    let processor = Processor::default();
     /////////////////////////////////////////////
     // if request not have body then this item not have a size data
-    if item_size.is_none() {
+    let processor = Processor::default();
+    if item_size_opt.is_none() {
         let zip_file = match std::fs::File::create(&zip_file_path) {
             Ok(file) => file,
             Err(err) => {
@@ -218,7 +220,7 @@ async fn func(event: Value, _: Context) -> Result<Value, Error> {
             }));
         }
     };
-    let item_size = item_size.unwrap();
+    let item_size = item_size_opt.unwrap();
     let size_image_bytes = match item_size.size_table {
         Some(size_table) => {
             let size_zh_escaped = item_size.size_zh.replace(SEPARATOR_PATTERN, " ");
