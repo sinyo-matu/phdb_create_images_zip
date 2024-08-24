@@ -1,4 +1,4 @@
-use image_combiner::{Processor, TableBase};
+use image_combiner::Processor;
 use lambda_runtime::{service_fn, Error, LambdaEvent};
 use rusoto_core::{Region, RusotoError};
 use rusoto_s3::{GetObjectError, GetObjectRequest, S3Client, S3};
@@ -22,10 +22,63 @@ struct SizeTable {
     pub body: Vec<Vec<String>>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SizeTableRenderRequestBody {
+    pub table_data: SizeTableRenderTableData,
+}
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SizeTableRenderTableData {
+    pub title: String,
+    pub headers: Vec<String>,
+    pub rows: Vec<Vec<String>>,
+}
+
+impl From<&SizeTable> for SizeTableRenderRequestBody {
+    fn from(size_table: &SizeTable) -> Self {
+        Self {
+            table_data: SizeTableRenderTableData {
+                title: "尺码表".to_string(),
+                headers: size_table.head.clone(),
+                rows: size_table.body.clone(),
+            },
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 struct Response {
     result: String,
     message: String,
+}
+
+const SIZE_TABLE_RENDER_URL: &str = "https://size-table-render.eliamo.workers.dev/image";
+const SIZE_TABLE_RENDER_AUTH_TOKEN: &str = "kBvz7@EwBA2PpPXu8hP*xCygfDGr2vgo8yo44CMn";
+
+struct SizeTableRenderClient {
+    client: reqwest::Client,
+    auth_token: String,
+}
+
+impl SizeTableRenderClient {
+    pub fn new() -> Self {
+        let client = reqwest::Client::new();
+        let auth_token = SIZE_TABLE_RENDER_AUTH_TOKEN.to_string();
+        Self { client, auth_token }
+    }
+
+    pub async fn render_size_table(&self, size_table: &SizeTable) -> Result<Vec<u8>, Error> {
+        let response = self
+            .client
+            .post(SIZE_TABLE_RENDER_URL)
+            .bearer_auth(&self.auth_token)
+            .json(&SizeTableRenderRequestBody::from(size_table))
+            .send()
+            .await?;
+        let bytes = response.bytes().await?;
+        Ok(bytes.to_vec())
+    }
 }
 
 const SEPARATOR_PATTERN: &[char] = &['，', '、', ','];
@@ -38,6 +91,7 @@ async fn main() -> Result<(), Error> {
 }
 
 async fn func(event: LambdaEvent<Value>) -> Result<Value, Error> {
+    let render_client = SizeTableRenderClient::new();
     let item_code = match event.payload.get("item_code") {
         Some(string) => string.as_str().unwrap().to_owned(),
         None => {
@@ -225,24 +279,15 @@ async fn func(event: LambdaEvent<Value>) -> Result<Value, Error> {
     };
     let item_size = item_size_opt.unwrap();
     let size_image_bytes = match item_size.size_table {
-        Some(size_table) => {
+        Some(mut size_table) => {
             let size_zh_escaped = item_size.size_zh.replace(SEPARATOR_PATTERN, " ");
             let table_head: Vec<String> = size_zh_escaped
                 .trim()
                 .split(' ')
                 .map(|s| s.to_string())
                 .collect();
-            let table_base = match TableBase::new(table_head, size_table.body, 2) {
-                Ok(table_base) => table_base,
-                Err(err) => {
-                    println!("error happened:{:?}", err);
-                    return Ok(json!(Response {
-                        result: "error".to_string(),
-                        message: format!("error when create table base error: {:?}", err)
-                    }));
-                }
-            };
-            match processor.create_table_image(table_base, &font_bytes).await {
+            size_table.head = table_head;
+            match render_client.render_size_table(&size_table).await {
                 Ok(bytes) => bytes,
                 Err(err) => {
                     println!("error happened:{:?}", err);
