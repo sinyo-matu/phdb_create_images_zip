@@ -85,7 +85,7 @@ struct Response {
 }
 
 const SIZE_TABLE_RENDER_URL: &str = "https://size-table-render.eliamo.workers.dev/image";
-const SIZE_TABLE_RENDER_AUTH_TOKEN: &str = "kBvz7@EwBA2PpPXu8hP*xCygfDGr2vgo8yo44CMn";
+const SIZE_TABLE_RENDER_AUTH_TOKEN: &str = "kBvz7_EwBA2PpPXu8hP+xCygfDGr2vgo8yo44CMn";
 
 struct SizeTableRenderClient {
     client: reqwest::Client,
