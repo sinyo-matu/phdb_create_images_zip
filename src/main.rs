@@ -3,7 +3,6 @@ use aws_sdk_s3::{
     error::SdkError,
     operation::{get_object::GetObjectError, put_object::PutObjectError},
 };
-use image_combiner::Processor;
 use lambda_runtime::{service_fn, Diagnostic, Error, LambdaEvent};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -43,6 +42,30 @@ struct SizeTableRenderTableData {
     pub rows: Vec<Vec<String>>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OneLineRenderRequestBody {
+    pub one_line_size_data: OneLineSizeData,
+}
+
+impl OneLineRenderRequestBody {
+    pub fn new_from_size_zh(size_zh: String) -> Self {
+        OneLineRenderRequestBody {
+            one_line_size_data: OneLineSizeData {
+                title: "关于尺码".to_string(),
+                size: size_zh,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OneLineSizeData {
+    pub title: String,
+    pub size: String,
+}
+
 impl From<&SizeTable> for SizeTableRenderRequestBody {
     fn from(size_table: &SizeTable) -> Self {
         Self {
@@ -80,6 +103,20 @@ impl SizeTableRenderClient {
         let response = self
             .client
             .post(SIZE_TABLE_RENDER_URL)
+            .query(&["type", "size-table"])
+            .bearer_auth(&self.auth_token)
+            .json(&SizeTableRenderRequestBody::from(size_table))
+            .send()
+            .await?;
+        let bytes = response.bytes().await?;
+        Ok(bytes.to_vec())
+    }
+
+    pub async fn render_one_line_size(&self, size_zh: String) -> Result<Vec<u8>, MyError> {
+        let response = self
+            .client
+            .post(SIZE_TABLE_RENDER_URL)
+            .query(&["type", "one-line-size"])
             .timeout(Duration::from_secs(
                 std::env::var("HTTP_TIMEOUT")
                     .unwrap()
@@ -87,7 +124,7 @@ impl SizeTableRenderClient {
                     .unwrap(),
             ))
             .bearer_auth(&self.auth_token)
-            .json(&SizeTableRenderRequestBody::from(size_table))
+            .json(&OneLineRenderRequestBody::new_from_size_zh(size_zh))
             .send()
             .await?;
         let bytes = response.bytes().await?;
@@ -112,12 +149,10 @@ enum MyError {
     S3PutObject(#[from] SdkError<PutObjectError>),
     #[error("Render: {0}")]
     Render(#[from] reqwest::Error),
-    #[error("Processor: {0}")]
-    ProcessorError(String),
     #[error("Zip: {0}")]
     Zip(#[from] zip::result::ZipError),
-    #[error("Font: {0}")]
-    Font(#[from] std::io::Error),
+    #[error("Io: {0}")]
+    Io(#[from] std::io::Error),
     #[error("item_code not found in body")]
     ItemCodeNotSet,
     #[error("image_count not found in body")]
@@ -143,16 +178,12 @@ impl From<MyError> for Diagnostic {
                 error_type: "Render".into(),
                 error_message: format!("{:?}", err),
             },
-            MyError::ProcessorError(err) => Diagnostic {
-                error_type: "ProcessorError".into(),
-                error_message: err,
-            },
             MyError::Zip(err) => Diagnostic {
                 error_type: "Zip".into(),
                 error_message: format!("{:?}", err),
             },
-            MyError::Font(err) => Diagnostic {
-                error_type: "Font".into(),
+            MyError::Io(err) => Diagnostic {
+                error_type: "Io".into(),
                 error_message: format!("{:?}", err),
             },
             MyError::ItemCodeNotSet => Diagnostic {
@@ -232,7 +263,6 @@ async fn func(event: LambdaEvent<Value>) -> Result<Value, MyError> {
     }
     /////////////////////////////////////////////
     // if request not have body then this item not have a size data
-    let processor = Processor::default();
     if body_option.is_none() {
         let mut zip_buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
         let mut zip_writer = zip::ZipWriter::new(&mut zip_buf);
@@ -261,7 +291,6 @@ async fn func(event: LambdaEvent<Value>) -> Result<Value, MyError> {
     ////////////////////////////////////////////////
     let item_size = serde_json::from_value::<ItemSize>(body_option.unwrap().to_owned())
         .map_err(|_| MyError::ItemSizeParseError)?;
-    let font_bytes = get_font_file("TaipeiSansTCBeta-Light.ttf", &s3_client).await?;
     let size_image_bytes = match item_size.size_table {
         Some(mut size_table) => {
             let size_zh_escaped = item_size.size_zh.replace(SEPARATOR_PATTERN, " ");
@@ -276,10 +305,7 @@ async fn func(event: LambdaEvent<Value>) -> Result<Value, MyError> {
         None => {
             let text = item_size.size_zh;
             let text = text.trim().replace(SEPARATOR_PATTERN, " ");
-            processor
-                .create_text_image(&text, &font_bytes)
-                .await
-                .map_err(|err| MyError::ProcessorError(format!("{:?}", err)))?
+            render_client.render_one_line_size(text).await?
         }
     };
 
@@ -308,20 +334,4 @@ async fn func(event: LambdaEvent<Value>) -> Result<Value, MyError> {
         result: "ok".to_string(),
         message: "".to_string()
     }))
-}
-
-async fn get_font_file(key: &str, s3_client: &aws_sdk_s3::Client) -> Result<Vec<u8>, MyError> {
-    let res = s3_client
-        .get_object()
-        .bucket("phfunctionresource")
-        .key(key)
-        .send()
-        .await?;
-    let res_body = res.body;
-    let mut font_bytes: Vec<u8> = Vec::new();
-    res_body
-        .into_async_read()
-        .read_to_end(&mut font_bytes)
-        .await?;
-    Ok(font_bytes)
 }
