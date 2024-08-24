@@ -75,7 +75,12 @@ impl SizeTableRenderClient {
         let response = self
             .client
             .post(SIZE_TABLE_RENDER_URL)
-            .timeout(Duration::from_secs(60))
+            .timeout(Duration::from_secs(
+                std::env::var("HTTP_TIMEOUT")
+                    .unwrap()
+                    .parse::<u64>()
+                    .unwrap(),
+            ))
             .bearer_auth(&self.auth_token)
             .json(&SizeTableRenderRequestBody::from(size_table))
             .send()
