@@ -183,6 +183,8 @@ async fn func(event: LambdaEvent<Value>) -> Result<Value, MyError> {
         .payload
         .get("item_code")
         .ok_or(MyError::ItemCodeNotSet)?
+        .to_string()
+        .trim_matches('"')
         .to_string();
     println!("item code is {}", &item_code);
     let image_count = event
@@ -190,6 +192,7 @@ async fn func(event: LambdaEvent<Value>) -> Result<Value, MyError> {
         .get("image_count")
         .ok_or(MyError::ImageCountNotSet)?
         .to_string()
+        .trim_matches('"')
         .parse::<u32>()
         .map_err(|_| MyError::ImageCountParse)?;
     let body_option = event.payload.get("body");
@@ -207,7 +210,7 @@ async fn func(event: LambdaEvent<Value>) -> Result<Value, MyError> {
             Err(err) => {
                 if let SdkError::ServiceError(service_error) = &err {
                     if let GetObjectError::NoSuchKey(_) = service_error.err() {
-                        println!("no such key:{}", format_args!("{}_{}.jpeg", item_code, no));
+                        println!("no such key: {}_{}.jpeg", item_code, no);
                         continue;
                     }
                 }
