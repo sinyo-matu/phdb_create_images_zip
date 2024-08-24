@@ -4,7 +4,10 @@ use rusoto_core::{Region, RusotoError};
 use rusoto_s3::{GetObjectError, GetObjectRequest, S3Client, S3};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::io::{Read, Write};
+use std::{
+    io::{Read, Write},
+    time::Duration,
+};
 use tokio::io::AsyncReadExt;
 
 #[derive(Clone, Debug, Deserialize)]
@@ -72,6 +75,7 @@ impl SizeTableRenderClient {
         let response = self
             .client
             .post(SIZE_TABLE_RENDER_URL)
+            .timeout(Duration::from_secs(60))
             .bearer_auth(&self.auth_token)
             .json(&SizeTableRenderRequestBody::from(size_table))
             .send()
