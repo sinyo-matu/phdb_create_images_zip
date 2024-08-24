@@ -1,14 +1,17 @@
-use bytes::Buf;
+use aws_config::BehaviorVersion;
+use aws_sdk_s3::{
+    error::SdkError,
+    operation::{get_object::GetObjectError, put_object::PutObjectError},
+};
 use image_combiner::Processor;
-use lambda_runtime::{service_fn, Error, LambdaEvent};
-use rusoto_core::{Region, RusotoError};
-use rusoto_s3::{GetObjectError, GetObjectRequest, S3Client, S3};
+use lambda_runtime::{service_fn, Diagnostic, Error, LambdaEvent};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
-    io::{Cursor, Read, Write},
+    io::{Cursor, Write},
     time::Duration,
 };
+use thiserror::Error as ThisError;
 use tokio::io::AsyncReadExt;
 use zip::write::SimpleFileOptions;
 
@@ -73,7 +76,7 @@ impl SizeTableRenderClient {
         Self { client, auth_token }
     }
 
-    pub async fn render_size_table(&self, size_table: &SizeTable) -> Result<Vec<u8>, Error> {
+    pub async fn render_size_table(&self, size_table: &SizeTable) -> Result<Vec<u8>, MyError> {
         let response = self
             .client
             .post(SIZE_TABLE_RENDER_URL)
@@ -101,85 +104,122 @@ async fn main() -> Result<(), Error> {
     Ok(())
 }
 
-async fn func(event: LambdaEvent<Value>) -> Result<Value, Error> {
+#[derive(Debug, ThisError)]
+enum MyError {
+    #[error("S3: {0}")]
+    S3GetObject(#[from] SdkError<GetObjectError>),
+    #[error("S3: {0}")]
+    S3PutObject(#[from] SdkError<PutObjectError>),
+    #[error("Render: {0}")]
+    Render(#[from] reqwest::Error),
+    #[error("Processor: {0}")]
+    ProcessorError(String),
+    #[error("Zip: {0}")]
+    Zip(#[from] zip::result::ZipError),
+    #[error("Font: {0}")]
+    Font(#[from] std::io::Error),
+    #[error("item_code not found in body")]
+    ItemCodeNotSet,
+    #[error("image_count not found in body")]
+    ImageCountNotSet,
+    #[error("failed to parse image count")]
+    ImageCountParse,
+    #[error("failed to parse item size")]
+    ItemSizeParseError,
+}
+
+impl From<MyError> for Diagnostic {
+    fn from(err: MyError) -> Self {
+        match err {
+            MyError::S3GetObject(err) => Diagnostic {
+                error_type: "S3GetObject".into(),
+                error_message: format!("{:?}", err),
+            },
+            MyError::S3PutObject(err) => Diagnostic {
+                error_type: "S3PutObject".into(),
+                error_message: format!("{:?}", err),
+            },
+            MyError::Render(err) => Diagnostic {
+                error_type: "Render".into(),
+                error_message: format!("{:?}", err),
+            },
+            MyError::ProcessorError(err) => Diagnostic {
+                error_type: "ProcessorError".into(),
+                error_message: err,
+            },
+            MyError::Zip(err) => Diagnostic {
+                error_type: "Zip".into(),
+                error_message: format!("{:?}", err),
+            },
+            MyError::Font(err) => Diagnostic {
+                error_type: "Font".into(),
+                error_message: format!("{:?}", err),
+            },
+            MyError::ItemCodeNotSet => Diagnostic {
+                error_type: "ItemCodeNotSet".into(),
+                error_message: "item_code not found in body".into(),
+            },
+            MyError::ImageCountNotSet => Diagnostic {
+                error_type: "ImageCountNotSet".into(),
+                error_message: "image_count not found in body".into(),
+            },
+            MyError::ImageCountParse => Diagnostic {
+                error_type: "ImageCountParse".into(),
+                error_message: "failed to parse image count".into(),
+            },
+            MyError::ItemSizeParseError => Diagnostic {
+                error_type: "ItemSizeParseError".into(),
+                error_message: "failed to parse item size".into(),
+            },
+        }
+    }
+}
+
+async fn func(event: LambdaEvent<Value>) -> Result<Value, MyError> {
     let render_client = SizeTableRenderClient::new();
-    let item_code = match event.payload.get("item_code") {
-        Some(string) => string.as_str().unwrap().to_owned(),
-        None => {
-            return Ok(json!(Response {
-                result: "error".to_string(),
-                message: "item_code not show".to_string()
-            }))
-        }
-    };
+    let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
+    let s3_client = aws_sdk_s3::Client::new(&config);
+    let item_code = event
+        .payload
+        .get("item_code")
+        .ok_or(MyError::ItemCodeNotSet)?
+        .to_string();
     println!("item code is {}", &item_code);
-    let image_count = match event.payload.get("image_count") {
-        Some(image_count) => match image_count.to_string().parse::<u32>() {
-            Ok(image_count_u32) => image_count_u32,
-            Err(_) => {
-                return Ok(json!(Response {
-                    result: "error".to_string(),
-                    message: "error when parse item count".to_string()
-                }));
-            }
-        },
-        None => {
-            return Ok(json!(Response {
-                result: "error".to_string(),
-                message: "image_count not show".to_string()
-            }));
-        }
-    };
-    let item_size_opt = match event.payload.get("body").unwrap().is_null() {
-        true => None,
-        false => {
-            match serde_json::from_value::<ItemSize>(event.payload.get("body").unwrap().to_owned())
-            {
-                Ok(item_size) => Some(item_size),
-                Err(err) => {
-                    return Ok(json!(Response {
-                        result: "error".to_string(),
-                        message: format!("error when parse body field error: {:?}", err)
-                    }));
-                }
-            }
-        }
-    };
-    let s3_client = S3Client::new(Region::ApNortheast1);
+    let image_count = event
+        .payload
+        .get("image_count")
+        .ok_or(MyError::ImageCountNotSet)?
+        .to_string()
+        .parse::<u32>()
+        .map_err(|_| MyError::ImageCountParse)?;
+    let body_option = event.payload.get("body");
+
     let mut image_bytes: Vec<Vec<u8>> = Vec::new();
     for no in 1..=image_count {
-        let request = GetObjectRequest {
-            bucket: "phitemspics".to_string(),
-            key: format!("{}_{}.jpeg", item_code, no),
-            ..Default::default()
-        };
-        let res = match s3_client.get_object(request).await {
-            Ok(object) => object,
-            Err(err) => {
-                if let RusotoError::Service(GetObjectError::NoSuchKey(_)) = err {
-                    println!("no such key:{}", format_args!("{}_{}.jpeg", item_code, no));
-                    continue;
-                }
-                println!("error happened:{}", err);
-                return Ok(json!(Response {
-                    result: "error".to_string(),
-                    message: "error when get item image".to_string()
-                }));
-            }
-        };
-        let res_body = res.body.unwrap();
-        let mut image_byte: Vec<u8> = Vec::new();
-        if let Err(err) = res_body
-            .into_async_read()
-            .read_to_end(&mut image_byte)
+        let res = match s3_client
+            .get_object()
+            .bucket("phitemspics")
+            .key(format!("{}_{}.jpeg", item_code, no))
+            .send()
             .await
         {
-            println!("error happened:{}", err);
-            return Ok(json!(Response {
-                result: "error".to_string(),
-                message: "error when read image bytes".to_string()
-            }));
-        }
+            Ok(object) => object,
+            Err(err) => {
+                if let SdkError::ServiceError(service_error) = &err {
+                    if let GetObjectError::NoSuchKey(_) = service_error.err() {
+                        println!("no such key:{}", format_args!("{}_{}.jpeg", item_code, no));
+                        continue;
+                    }
+                }
+                return Err(MyError::S3GetObject(err));
+            }
+        };
+        let res_body = res.body;
+        let mut image_byte: Vec<u8> = Vec::new();
+        res_body
+            .into_async_read()
+            .read_to_end(&mut image_byte)
+            .await?;
         println!(
             "get image:{},len:{}",
             format_args!("{}_{}.jpeg", item_code, no),
@@ -190,66 +230,35 @@ async fn func(event: LambdaEvent<Value>) -> Result<Value, Error> {
     /////////////////////////////////////////////
     // if request not have body then this item not have a size data
     let processor = Processor::default();
-    if item_size_opt.is_none() {
+    if body_option.is_none() {
         let mut zip_buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
         let mut zip_writer = zip::ZipWriter::new(&mut zip_buf);
         let zip_options =
             SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
         for (i, image_byte) in image_bytes.into_iter().enumerate() {
-            if let Err(err) =
-                zip_writer.start_file(format!("{}_{}.jpg", item_code, i + 1), zip_options)
-            {
-                return Ok(json!(Response {
-                    result: "error".to_string(),
-                    message: format!("error when zip start file error:{}", err)
-                }));
-            };
-
-            if let Err(err) = zip_writer.write_all(&image_byte) {
-                return Ok(json!(Response {
-                    result: "error".to_string(),
-                    message: format!("error when zip write file error:{}", err)
-                }));
-            };
+            zip_writer.start_file(format!("{}_{}.jpg", item_code, i + 1), zip_options)?;
+            zip_writer.write_all(&image_byte)?;
         }
-        if let Err(err) = zip_writer.finish() {
-            return Ok(json!(Response {
-                result: "error".to_string(),
-                message: format!("error when zip finish error:{}", err)
-            }));
-        }
+        zip_writer.finish()?;
 
         let zip_file_buf = zip_buf.into_inner();
         println!("read buf length:{}", zip_file_buf.len());
-        let put_request = rusoto_s3::PutObjectRequest {
-            bucket: "phbundledimages".to_string(),
-            body: Some(zip_file_buf.into()),
-            key: format!("{}.zip", item_code),
-            ..Default::default()
-        };
-        if s3_client.put_object(put_request).await.is_err() {
-            return Ok(json!(Response {
-                result: "error".to_string(),
-                message: "error when put image".to_string()
-            }));
-        }
+        s3_client
+            .put_object()
+            .bucket("phbundledimages")
+            .key(format!("{}.zip", item_code))
+            .body(zip_file_buf.into())
+            .send()
+            .await?;
         return Ok(json!(Response {
             result: "ok".to_string(),
             message: "".to_string()
         }));
     };
     ////////////////////////////////////////////////
-    let font_bytes = match get_font_file("TaipeiSansTCBeta-Light.ttf", &s3_client).await {
-        Ok(font_byte) => font_byte,
-        Err(err) => {
-            println!("get font file error happened:{:?}", err);
-            return Ok(json!(Response {
-                result: "error".to_string(),
-                message: "can not found font file".to_string()
-            }));
-        }
-    };
-    let item_size = item_size_opt.unwrap();
+    let item_size = serde_json::from_value::<ItemSize>(body_option.unwrap().to_owned())
+        .map_err(|_| MyError::ItemSizeParseError)?;
+    let font_bytes = get_font_file("TaipeiSansTCBeta-Light.ttf", &s3_client).await?;
     let size_image_bytes = match item_size.size_table {
         Some(mut size_table) => {
             let size_zh_escaped = item_size.size_zh.replace(SEPARATOR_PATTERN, " ");
@@ -259,30 +268,15 @@ async fn func(event: LambdaEvent<Value>) -> Result<Value, Error> {
                 .map(|s| s.to_string())
                 .collect();
             size_table.head = table_head;
-            match render_client.render_size_table(&size_table).await {
-                Ok(bytes) => bytes,
-                Err(err) => {
-                    println!("error happened:{:?}", err);
-                    return Ok(json!(Response {
-                        result: "error".to_string(),
-                        message: format!("error when create table image error: {:?}", err)
-                    }));
-                }
-            }
+            render_client.render_size_table(&size_table).await?
         }
         None => {
             let text = item_size.size_zh;
             let text = text.trim().replace(SEPARATOR_PATTERN, " ");
-            match processor.create_text_image(&text, &font_bytes).await {
-                Ok(bytes) => bytes,
-                Err(err) => {
-                    println!("error happened:{:?}", err);
-                    return Ok(json!(Response {
-                        result: "error".to_string(),
-                        message: format!("error when create text image error: {:?}", err)
-                    }));
-                }
-            }
+            processor
+                .create_text_image(&text, &font_bytes)
+                .await
+                .map_err(|err| MyError::ProcessorError(format!("{:?}", err)))?
         }
     };
 
@@ -291,70 +285,36 @@ async fn func(event: LambdaEvent<Value>) -> Result<Value, Error> {
     let zip_options =
         SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
     for (i, image_byte) in image_bytes.into_iter().enumerate() {
-        if let Err(err) = zip_writer.start_file(format!("{}_{}.jpg", item_code, i + 1), zip_options)
-        {
-            return Ok(json!(Response {
-                result: "error".to_string(),
-                message: format!("error when zip start file error:{}", err)
-            }));
-        };
-
-        if let Err(err) = zip_writer.write_all(&image_byte) {
-            return Ok(json!(Response {
-                result: "error".to_string(),
-                message: format!("error when zip write file error:{}", err)
-            }));
-        };
+        zip_writer.start_file(format!("{}_{}.jpg", item_code, i + 1), zip_options)?;
+        zip_writer.write_all(&image_byte)?;
     }
-    if let Err(err) = zip_writer.start_file(format!("{}_size.jpg", item_code), zip_options) {
-        return Ok(json!(Response {
-            result: "error".to_string(),
-            message: format!("error when zip start file error:{}", err)
-        }));
-    }
-    if let Err(err) = zip_writer.write_all(&size_image_bytes) {
-        return Ok(json!(Response {
-            result: "error".to_string(),
-            message: format!("error when zip write file error:{}", err)
-        }));
-    };
-
-    if let Err(err) = zip_writer.finish() {
-        return Ok(json!(Response {
-            result: "error".to_string(),
-            message: format!("error when zip finish error:{}", err)
-        }));
-    }
+    zip_writer.start_file(format!("{}_size.jpg", item_code), zip_options)?;
+    zip_writer.write_all(&size_image_bytes)?;
+    zip_writer.finish()?;
 
     let zip_file_buf = zip_buf.into_inner();
     println!("read buf length:{}", zip_file_buf.len());
-    let put_request = rusoto_s3::PutObjectRequest {
-        bucket: "phbundledimages".to_string(),
-        body: Some(zip_file_buf.into()),
-        key: format!("{}.zip", item_code),
-        ..Default::default()
-    };
-    if let Err(err) = s3_client.put_object(put_request).await {
-        println!("error happened:{:?}", err);
-        return Ok(json!(Response {
-            result: "error".to_string(),
-            message: format!("put file error: {:?}", err)
-        }));
-    }
+    s3_client
+        .put_object()
+        .bucket("phbundledimages")
+        .body(zip_file_buf.into())
+        .key(format!("{}.zip", item_code))
+        .send()
+        .await?;
     Ok(json!(Response {
         result: "ok".to_string(),
         message: "".to_string()
     }))
 }
 
-async fn get_font_file(key: &str, s3_client: &S3Client) -> Result<Vec<u8>, Error> {
-    let request = GetObjectRequest {
-        bucket: "phfunctionresource".into(),
-        key: key.into(),
-        ..Default::default()
-    };
-    let res = s3_client.get_object(request).await?;
-    let res_body = res.body.unwrap();
+async fn get_font_file(key: &str, s3_client: &aws_sdk_s3::Client) -> Result<Vec<u8>, MyError> {
+    let res = s3_client
+        .get_object()
+        .bucket("phfunctionresource")
+        .key(key)
+        .send()
+        .await?;
+    let res_body = res.body;
     let mut font_bytes: Vec<u8> = Vec::new();
     res_body
         .into_async_read()
