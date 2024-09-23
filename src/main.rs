@@ -108,6 +108,9 @@ impl SizeTableRenderClient {
             .json(&SizeTableRenderRequestBody::from(size_table))
             .send()
             .await?;
+        if !response.status().is_success() {
+            return Err(MyError::RenderResponse(response.text().await?));
+        }
         let bytes = response.bytes().await?;
         Ok(bytes.to_vec())
     }
@@ -149,6 +152,8 @@ enum MyError {
     S3PutObject(#[from] SdkError<PutObjectError>),
     #[error("Render: {0}")]
     Render(#[from] reqwest::Error),
+    #[error("RenderResponse: {0}")]
+    RenderResponse(String),
     #[error("Zip: {0}")]
     Zip(#[from] zip::result::ZipError),
     #[error("Io: {0}")]
