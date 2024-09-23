@@ -207,6 +207,10 @@ impl From<MyError> for Diagnostic {
                 error_type: "ItemSizeParseError".into(),
                 error_message: "failed to parse item size".into(),
             },
+            MyError::RenderResponse(err) => Diagnostic {
+                error_type: "RenderResponse".into(),
+                error_message: err,
+            },
         }
     }
 }
