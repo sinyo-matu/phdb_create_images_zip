@@ -18,7 +18,7 @@ jobs:
       BINARY_NAME: phdb_create_images_zip
       FUNCTION_NAME: phdb_create_images_zip
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v5
       - name: Build and Zip
         uses: zhxiaogg/cargo-static-build@master
         with:
